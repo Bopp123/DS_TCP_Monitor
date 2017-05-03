@@ -12,9 +12,9 @@
 			<Label styleClass="service-port-label" text="service port" />
 			<TextField styleClass="service-port-field" text="8010" />
 			<Label styleClass="redirect-host-label" text="redirect host" />
-			<TextField styleClass="redirect-host-field" text="uranus.f4.htw-berlin.de" HBox.hgrow="ALWAYS" />
+			<TextField styleClass="redirect-host-field" text="heise.de" HBox.hgrow="ALWAYS" />
 			<Label styleClass="redirect-port-label" text=":" />
-			<TextField styleClass="redirect-port-field" text="21" />
+			<TextField styleClass="redirect-port-field" text="80" />
 			<Button styleClass="start-button">
 				<tooltip><Tooltip /></tooltip>
 			</Button>

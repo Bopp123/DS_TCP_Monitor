@@ -1,0 +1,2 @@
+in browser eingeben: localhost:8010
+wenn heise.de z.B: localhost:8010/newsticker/journal/

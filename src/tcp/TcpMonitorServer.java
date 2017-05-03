@@ -4,23 +4,19 @@ package tcp;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketException;
-import java.net.UnknownHostException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.function.Consumer;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-import java.util.stream.Stream;
 
 import de.sb.toolbox.Copyright;
 import de.sb.toolbox.io.IOStreams;
-import de.sb.toolbox.io.MultiInputStream;
 import de.sb.toolbox.io.MultiOutputStream;
 
 
@@ -141,87 +137,55 @@ public class TcpMonitorServer implements Runnable, AutoCloseable {
 		 * Handles the client connection by transporting all data to a new server connection, and
 		 * vice versa. Closes all connections upon completion.
 		 */
-		public void run () {
+		public void run() {
 			try (Socket clientConnection = this.clientConnection) {
 				long openTimestamp = System.currentTimeMillis();
-				try (Socket serverConnection = new Socket(this.parent.redirectHostAddress.getHostName(), this.parent.redirectHostAddress.getPort())) {
-					// TODO: Transport all content from the client connection's input stream into
-					// both the server connection's output stream and a byte output stream. In
-					// parallel, transport all content from the server connection's input stream
-					// into both the client connection's output stream and another byte output stream.
-					// Note that the existing utility classes MultiInputStream, MultiOutputStream and
-					// Streams#copy() might allow a highly elegant (and slim) solution, especially
-					// in conjunction with Java 8 Lambda-Operators.
-					try(
-							MultiInputStream inputStreamClient = new MultiInputStream(clientConnection.getInputStream());
-							ByteArrayOutputStream outputStreamBytesClient = new ByteArrayOutputStream();
-							MultiOutputStream outputStreamClient = new MultiOutputStream(clientConnection.getOutputStream(),outputStreamBytesClient);
-							
-							MultiInputStream inputStreamServer = new MultiInputStream(serverConnection.getInputStream());
-							ByteArrayOutputStream outputStreamBytesServer = new ByteArrayOutputStream();
-							MultiOutputStream outputStreamServer = new MultiOutputStream(serverConnection.getOutputStream(),outputStreamBytesServer);
-							){
+				try (Socket serverConnection = new Socket(this.parent.redirectHostAddress.getHostName(),this.parent.redirectHostAddress.getPort())) {
+					try (ByteArrayOutputStream outputStreamBytesClient = new ByteArrayOutputStream();
+							ByteArrayOutputStream outputStreamBytesServer = new ByteArrayOutputStream();) {
+						// when the client or server sockets are closed those
+						// stream are closed aswell. See Socket.close
+						InputStream inputStreamClient = clientConnection.getInputStream();
+						InputStream inputStreamServer = serverConnection.getInputStream();
+
+						MultiOutputStream multiOutputStreamClient = new MultiOutputStream(clientConnection.getOutputStream(), outputStreamBytesClient);
+						MultiOutputStream multiOutputStreamServer = new MultiOutputStream(serverConnection.getOutputStream(), outputStreamBytesServer);
+
 						int bufferSize = 0x10000;
 						Future<?> clientThreadFuture = null;
 						Future<?> serverThreadFuture = null;
-						try {
-							
-							clientThreadFuture = parent.threadPool.submit(()->{
-								try {
-									IOStreams.copy(inputStreamClient, outputStreamClient, bufferSize);
-								} catch (final Throwable exception) {
-									this.parent.exceptionConsumer.accept(exception);
-								}
-							});
-						
-							serverThreadFuture = parent.threadPool.submit(()->{
-								try {
-									IOStreams.copy(inputStreamServer, outputStreamServer, bufferSize);
-								} catch (final Throwable exception) {
-									this.parent.exceptionConsumer.accept(exception);
-								}
-							});
-						} catch (final Throwable exception) {
-							this.parent.exceptionConsumer.accept(exception);
-						} finally {
-							clientThreadFuture.get();
-							serverThreadFuture.get();
-							long closeTimestamp = System.currentTimeMillis();
-							this.parent.recordConsumer.accept(new TcpMonitorRecord(openTimestamp, closeTimestamp, outputStreamBytesClient.toByteArray(), outputStreamBytesServer.toByteArray()));
-						}
-					} catch (final Throwable exception) {
-						throw exception;
+						// Transport all content from the client connection's input stream into
+						// both the server connection's output stream and a byte output stream.
+						clientThreadFuture = parent.threadPool.submit(() -> {
+							try {
+								IOStreams.copy(inputStreamClient, multiOutputStreamServer, bufferSize);
+							} catch (Throwable exception) {
+								this.parent.exceptionConsumer.accept(exception);
+							}
+						});
+						// In parallel, transport all content from the server connection's input stream
+						// into both the client connection's output stream and another byte output stream.
+						serverThreadFuture = parent.threadPool.submit(() -> {
+							try {
+								IOStreams.copy(inputStreamServer, multiOutputStreamClient, bufferSize);
+							} catch (final Throwable exception) {
+								this.parent.exceptionConsumer.accept(exception);
+							}
+						});
+						// Resynchronize them before closing all resources
+						clientThreadFuture.get();
+						serverThreadFuture.get();
+						long closeTimestamp = System.currentTimeMillis();
+						// If all goes well, use "ByteArrayOutputStream#toByteArray()" to get the respective request and response data; use it to
+						// create a TcpMonitorRecord, and flush it using "this.parent.recordConsumer.accept()"
+						this.parent.recordConsumer.accept(new TcpMonitorRecord(openTimestamp, closeTimestamp,
+								outputStreamBytesClient.toByteArray(), outputStreamBytesServer.toByteArray()));
 					}
-					
-					
-	
-					// Start two transporter threads, and resynchronize them before closing all
-					// resources. If all goes well, use "ByteArrayOutputStream#toByteArray()" to get
-					// the respective request and response data; use it to create a TcpMonitorRecord,
-					// and flush it using "this.parent.recordConsumer.accept()". If anything goes
-					// wrong, use "this.parent.exceptionConsumer.accept()" instead.
-	
-					// Note that you'll need 2 transporters in 1-2 separate threads to complete this
-					// task, as you cannot foresee if the client or the server closes the connection,
-					// or if the protocol communicated involves handshakes. Either case implies you'd
-					// end up reading "too much" if you try to transport both communication directions
-					// within a single thread, creating a deadlock scenario. The easiest solution probably
-					// involves the ConnectionHandler's executor service (see Method submit()), and
-					// resynchronization using the futures returned by said method. Finally, beware that
-					// HTTP usually implies delayed closing of connections after transmissions due to
-					// connection caching.
-	
-					// Note that closing one socket stream closes the underlying socket connection (and
-					// therefore also the second socket stream) as well. Also note that a socket stream's
-					// read() method will throw a SocketException when interrupted while blocking, which is
-					// "normal" behavior and should be handled as if the read() Method returned -1!
-					//
-					// Hint: use curl (OS/X) or wget (linux) to access http resources without gzip
-					// compression
 				}
+				// If anything goes wrong, use "this.parent.exceptionConsumer.accept()" instead.
 			} catch (final Throwable exception) {
 				exception.printStackTrace();
-//				this.parent.exceptionConsumer.accept(exception);
+				this.parent.exceptionConsumer.accept(exception);
 			}
 		}
 	}
