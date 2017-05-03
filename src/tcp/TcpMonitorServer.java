@@ -148,8 +148,8 @@ public class TcpMonitorServer implements Runnable, AutoCloseable {
 						InputStream inputStreamClient = clientConnection.getInputStream();
 						InputStream inputStreamServer = serverConnection.getInputStream();
 
-						MultiOutputStream multiOutputStreamClient = new MultiOutputStream(clientConnection.getOutputStream(), outputStreamBytesClient);
-						MultiOutputStream multiOutputStreamServer = new MultiOutputStream(serverConnection.getOutputStream(), outputStreamBytesServer);
+						MultiOutputStream multiOutputStreamClient = new MultiOutputStream(clientConnection.getOutputStream(), outputStreamBytesServer);
+						MultiOutputStream multiOutputStreamServer = new MultiOutputStream(serverConnection.getOutputStream(), outputStreamBytesClient);
 
 						int bufferSize = 0x10000;
 						Future<?> clientThreadFuture = null;
